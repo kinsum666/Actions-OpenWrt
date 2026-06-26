@@ -30,14 +30,14 @@ if [ -f "$MK_FILE" ]; then
     sed -i 's/jdcloud_re-ss-01/jdcloud-re-ss-01/g' "$MK_FILE"
     sed -i 's/ipq-wifi-jdcloud_re-ss-01/ipq-wifi-jdcloud-re-ss-01/g' "$MK_FILE"
 
-    # 确保设备定义块中包含 DEVICE_DTS := ipq6000-jdcloud-re-ss-01
-    # 先删除可能存在的旧 DEVICE_DTS 行（包含 qcom/ 或其它）
+    # 确保设备定义块中包含 DEVICE_DTS := qcom/ipq6000-jdcloud-re-ss-01
+    # 先删除可能存在的旧 DEVICE_DTS 行（包含任何内容）
     sed -i '/^define Device\/jdcloud-re-ss-01/,/^endef/ { /DEVICE_DTS/d; }' "$MK_FILE"
-    # 在 endef 前插入新行
-    sed -i '/^define Device\/jdcloud-re-ss-01/,/^endef/ { /^endef/ i\	DEVICE_DTS := ipq6000-jdcloud-re-ss-01
+    # 在 endef 前插入新行（注意缩进使用 tab）
+    sed -i '/^define Device\/jdcloud-re-ss-01/,/^endef/ { /^endef/ i\	DEVICE_DTS := qcom/ipq6000-jdcloud-re-ss-01
     }' "$MK_FILE"
 
-    echo "✅ ipq60xx.mk 已修改，并添加 DEVICE_DTS"
+    echo "✅ ipq60xx.mk 已修改，并添加 DEVICE_DTS := qcom/ipq6000-jdcloud-re-ss-01"
 else
     echo "⚠️ 未找到 ipq60xx.mk，跳过"
 fi
@@ -66,9 +66,9 @@ else
     fi
 fi
 
-# 3. 如果找到 DTS，复制到 files/ 目录（构建系统使用的路径，注意不带 qcom/）
+# 3. 如果找到 DTS，复制到 files/ 目录（**必须包含 qcom/ 子目录**）
 if [ -n "$DTS_SRC" ]; then
-    DTS_DEST_DIR="target/linux/qualcommax/files/arch/arm64/boot/dts"
+    DTS_DEST_DIR="target/linux/qualcommax/files/arch/arm64/boot/dts/qcom"
     mkdir -p "$DTS_DEST_DIR"
     DTS_DEST="$DTS_DEST_DIR/ipq6000-jdcloud-re-ss-01.dts"
     cp "$DTS_SRC" "$DTS_DEST"
@@ -80,7 +80,7 @@ else
 fi
 
 # 4. 最终校验：目标文件是否成功创建
-if [ -f "target/linux/qualcommax/files/arch/arm64/boot/dts/ipq6000-jdcloud-re-ss-01.dts" ]; then
+if [ -f "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-jdcloud-re-ss-01.dts" ]; then
     echo "✅ 最终校验通过：DTS 文件已就位"
 else
     echo "❌ 错误：未能成功创建 ipq6000-jdcloud-re-ss-01.dts，编译将失败！"
