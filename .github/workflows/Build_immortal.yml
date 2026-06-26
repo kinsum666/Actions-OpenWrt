@@ -1,7 +1,7 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
 #
-# File: .github/workflows/openwrt-bulder.yml
+# File: .github/workflows/openwrt-builder.yml
 # Description: Build OpenWrt using GitHub Actions
 #
 # Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
@@ -93,6 +93,7 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
+        # 编译尝试：多线程，失败则单线程，再失败则单线程详细输出
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
@@ -110,7 +111,7 @@ jobs:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
 
-    # ========== 修复：使用 find 精确定位固件目录 ==========
+    # ========== 修复：精确定位固件目录（仅当存在 sysupgrade 文件时） ==========
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
@@ -127,14 +128,14 @@ jobs:
         echo "📁 固件目录：$PWD"
         ls -lh
 
-    - name: Upload firmware directory
+    - name: Upload firmware directory (artifact)
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    # ========== 修复：安全的 release 标签生成 ==========
+    # ========== 生成 Release 标签 ==========
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
@@ -146,6 +147,7 @@ jobs:
         echo "" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
+    # ========== 修复：只上传 sysupgrade 和 factory 固件，避免匹配 /swapfile ==========
     - name: Upload firmware to release
       uses: softprops/action-gh-release@master
       if: steps.tag.outputs.status == 'success' && !cancelled()
@@ -154,7 +156,9 @@ jobs:
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        files: |
+          ${{ env.FIRMWARE }}/*-sysupgrade.bin
+          ${{ env.FIRMWARE }}/*-factory.bin
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
