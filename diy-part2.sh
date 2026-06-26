@@ -66,9 +66,9 @@ else
     fi
 fi
 
-# 3. 如果找到 DTS，复制到 files/ 目录（**必须包含 qcom/ 子目录**）
+# 3. 如果找到 DTS，复制到 dts/ 目录（OpenWrt 编译系统使用的路径）
 if [ -n "$DTS_SRC" ]; then
-    DTS_DEST_DIR="target/linux/qualcommax/files/arch/arm64/boot/dts/qcom"
+    DTS_DEST_DIR="target/linux/qualcommax/dts/qcom"
     mkdir -p "$DTS_DEST_DIR"
     DTS_DEST="$DTS_DEST_DIR/ipq6000-jdcloud-re-ss-01.dts"
     cp "$DTS_SRC" "$DTS_DEST"
@@ -79,8 +79,8 @@ else
     exit 1
 fi
 
-# 4. 最终校验：目标文件是否成功创建
-if [ -f "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-jdcloud-re-ss-01.dts" ]; then
+# 4. 最终校验：检查 dts/ 目录
+if [ -f "target/linux/qualcommax/dts/qcom/ipq6000-jdcloud-re-ss-01.dts" ]; then
     echo "✅ 最终校验通过：DTS 文件已就位"
 else
     echo "❌ 错误：未能成功创建 ipq6000-jdcloud-re-ss-01.dts，编译将失败！"
