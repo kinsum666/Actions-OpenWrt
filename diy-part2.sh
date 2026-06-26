@@ -22,13 +22,22 @@ sed -i 's/192.168.1.1/192.168.50.1/g' package/base-files/files/bin/config_genera
 # ========== 修正设备名和 DTS 文件 ==========
 echo "开始修正设备名和 DTS 文件..."
 
-# 1. 修改 ipq60xx.mk（将下划线改为连字符）
+# 1. 修改 ipq60xx.mk（将下划线改为连字符，并设置 DEVICE_DTS）
 MK_FILE="target/linux/qualcommax/image/ipq60xx.mk"
 if [ -f "$MK_FILE" ]; then
     cp "$MK_FILE" "$MK_FILE.bak"
+    # 将设备名中的下划线改为连字符
     sed -i 's/jdcloud_re-ss-01/jdcloud-re-ss-01/g' "$MK_FILE"
     sed -i 's/ipq-wifi-jdcloud_re-ss-01/ipq-wifi-jdcloud-re-ss-01/g' "$MK_FILE"
-    echo "✅ ipq60xx.mk 已修改"
+
+    # 确保设备定义块中包含 DEVICE_DTS := ipq6000-jdcloud-re-ss-01
+    # 先删除可能存在的旧 DEVICE_DTS 行（包含 qcom/ 或其它）
+    sed -i '/^define Device\/jdcloud-re-ss-01/,/^endef/ { /DEVICE_DTS/d; }' "$MK_FILE"
+    # 在 endef 前插入新行
+    sed -i '/^define Device\/jdcloud-re-ss-01/,/^endef/ { /^endef/ i\	DEVICE_DTS := ipq6000-jdcloud-re-ss-01
+    }' "$MK_FILE"
+
+    echo "✅ ipq60xx.mk 已修改，并添加 DEVICE_DTS"
 else
     echo "⚠️ 未找到 ipq60xx.mk，跳过"
 fi
@@ -57,9 +66,9 @@ else
     fi
 fi
 
-# 3. 如果找到 DTS，复制到 files/ 目录（构建系统使用的路径）
+# 3. 如果找到 DTS，复制到 files/ 目录（构建系统使用的路径，注意不带 qcom/）
 if [ -n "$DTS_SRC" ]; then
-    DTS_DEST_DIR="target/linux/qualcommax/files/arch/arm64/boot/dts/qcom"
+    DTS_DEST_DIR="target/linux/qualcommax/files/arch/arm64/boot/dts"
     mkdir -p "$DTS_DEST_DIR"
     DTS_DEST="$DTS_DEST_DIR/ipq6000-jdcloud-re-ss-01.dts"
     cp "$DTS_SRC" "$DTS_DEST"
@@ -71,15 +80,13 @@ else
 fi
 
 # 4. 最终校验：目标文件是否成功创建
-if [ -f "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-jdcloud-re-ss-01.dts" ]; then
+if [ -f "target/linux/qualcommax/files/arch/arm64/boot/dts/ipq6000-jdcloud-re-ss-01.dts" ]; then
     echo "✅ 最终校验通过：DTS 文件已就位"
 else
     echo "❌ 错误：未能成功创建 ipq6000-jdcloud-re-ss-01.dts，编译将失败！"
     exit 1
 fi
 
-# 5. 可选：确保 .config 中的设备名与新名称一致（由 defconfig 自动处理，此步骤可省略）
-# 但为了保险，可以执行一次 make defconfig 刷新（但工作流中后续会执行，这里不重复）
 echo "修正完成。"
 echo "建议执行以下命令清理并重新编译："
 echo "  make target/linux/clean"
