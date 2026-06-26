@@ -17,7 +17,7 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/immortalwrt/immortalwrt -b master openwrt
 
-      # 修正点：使用正确的仓库内部路径
+      # 修正：路径去掉多余的 netem/ 前缀
       - name: Fetch netem source
         run: |
           git clone --depth=1 https://github.com/kinsum666/openwrt-netem netem
