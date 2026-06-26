@@ -1,7 +1,7 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
 #
-# File: .github/workflows/openwrt-bulder.yml
+# File: .github/workflows/openwrt-builder.yml
 # Description: Build OpenWrt using GitHub Actions
 #
 # Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
@@ -110,14 +110,22 @@ jobs:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
 
+    # ========== 修复：精确定位固件目录，未找到则退出 ==========
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
+        FIRMWARE_DIR=$(find openwrt/bin/targets -name "*-sysupgrade.bin" -exec dirname {} \; | head -n1)
+        if [ -z "$FIRMWARE_DIR" ]; then
+          echo "❌ 未找到 sysupgrade 固件，无法上传！"
+          exit 1
+        fi
+        cd "$FIRMWARE_DIR"
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
+        echo "📁 固件目录：$PWD"
+        ls -lh
 
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
@@ -132,9 +140,10 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+        # 移除可能未定义的环境变量引用，避免报错
         echo "status=success" >> $GITHUB_OUTPUT
 
+    # ========== 修复：只上传 sysupgrade 和 factory 固件 ==========
     - name: Upload firmware to release
       uses: softprops/action-gh-release@master
       if: steps.tag.outputs.status == 'success' && !cancelled()
@@ -143,7 +152,9 @@ jobs:
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        files: |
+          ${{ env.FIRMWARE }}/*-sysupgrade.bin
+          ${{ env.FIRMWARE }}/*-factory.bin
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
