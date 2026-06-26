@@ -94,7 +94,6 @@ jobs:
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) 2>&1 | tee build.log
-        # 如果多线程失败，尝试单线程并输出详细日志
         if [ ${PIPESTATUS[0]} -ne 0 ]; then
           echo "Multi-thread build failed, retrying with single thread and verbose output"
           make -j1 V=s 2>&1 | tee -a build.log
@@ -113,7 +112,6 @@ jobs:
       id: verify
       if: steps.compile.outputs.status == 'success'
       run: |
-        # 查找 sysupgrade 固件所在目录
         FIRMWARE_DIR=$(find openwrt/bin/targets -name "*.sysupgrade.bin" -exec dirname {} \; | head -n1)
         if [ -z "$FIRMWARE_DIR" ]; then
           echo "⚠️ 未找到 sysupgrade 固件，跳过验证"
@@ -121,15 +119,9 @@ jobs:
           exit 0
         fi
         echo "验证固件目录：$FIRMWARE_DIR"
-
-        # 安装 unsquashfs（如果未安装）
         sudo apt-get install -y squashfs-tools
-
-        # 解压固件到临时目录
         mkdir -p /tmp/rootfs
         unsquashfs -d /tmp/rootfs "$FIRMWARE_DIR"/*-sysupgrade.bin
-
-        # 从 opkg status 文件中提取已安装的包
         if [ -f /tmp/rootfs/usr/lib/opkg/status ]; then
           grep '^Package:' /tmp/rootfs/usr/lib/opkg/status | awk '{print $2}' | sort > /tmp/actual-packages.txt
           PKG_COUNT=$(wc -l < /tmp/actual-packages.txt)
@@ -138,14 +130,11 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat /tmp/actual-packages.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          # 保存到固件目录，供后续 Release 使用
           cp /tmp/actual-packages.txt "$FIRMWARE_DIR"/actual-packages.txt
         else
           echo "⚠️ 未找到 opkg status 文件，无法验证"
           echo "## ⚠️ 无法验证软件包列表（未找到 status 文件）" >> $GITHUB_STEP_SUMMARY
         fi
-
-        # 清理临时文件
         rm -rf /tmp/rootfs
 
     - name: Check space usage
@@ -159,16 +148,27 @@ jobs:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
 
-    # ========== 改进：精确查找固件目录 ==========
+    # ========== 新增：调试目录结构 ==========
+    - name: Debug directories
+      if: always()
+      run: |
+        echo "📂 检查 openwrt/bin/targets 目录结构："
+        find openwrt/bin/targets -type f -name "*.bin" 2>/dev/null | head -20 || echo "未找到 .bin 文件"
+        ls -laR openwrt/bin/targets/ 2>/dev/null || echo "目录不存在"
+
+    # ========== 改进：精确查找固件目录并安全处理 ==========
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        # 使用 find 定位第一个包含 sysupgrade 的目录（即固件输出目录）
-        FIRMWARE_DIR=$(find openwrt/bin/targets -name "*.sysupgrade.bin" -exec dirname {} \; | head -n1)
+        FIRMWARE_DIR=$(find openwrt/bin/targets -name "*-sysupgrade.bin" -exec dirname {} \; | head -n1)
         if [ -z "$FIRMWARE_DIR" ]; then
           echo "❌ 未找到 sysupgrade 固件，无法上传！"
-          exit 1
+          echo "status=failure" >> $GITHUB_OUTPUT
+          # 设置一个安全的空目录，避免误操作
+          mkdir -p /tmp/empty
+          echo "FIRMWARE=/tmp/empty" >> $GITHUB_ENV
+          exit 0   # 不中断工作流，让后续步骤根据状态跳过
         fi
         cd "$FIRMWARE_DIR"
         rm -rf packages
@@ -190,12 +190,10 @@ jobs:
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        # 构建 Release 说明
         echo "# OpenWrt 固件发布" > release.txt
         echo "**编译时间**: $(date)" >> release.txt
         echo "**设备**: 京东云亚瑟 (AX1800 Pro)" >> release.txt
         echo "" >> release.txt
-        # 如果存在软件包列表，追加
         if [ -f "${{ env.FIRMWARE }}/actual-packages.txt" ]; then
           echo "## 📦 固件中包含的软件包（实际编译成功）" >> release.txt
           echo '```' >> release.txt
@@ -205,13 +203,11 @@ jobs:
           echo "⚠️ 未生成软件包列表，请检查编译日志" >> release.txt
         fi
         echo "" >> release.txt
-        # 安全写法：如果启用了 GoFile 且 URL 存在，则追加（但本工作流未定义，故忽略）
-        # 如需使用，请确保 UPLOAD_GOFILE 和 steps.gofile 存在，否则不要写这行
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware to release
       uses: softprops/action-gh-release@master
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+      if: steps.organize.outputs.status == 'success' && steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
