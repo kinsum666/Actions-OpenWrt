@@ -110,14 +110,22 @@ jobs:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
 
+    # ========== 修复：使用 find 精确定位固件目录 ==========
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
+        FIRMWARE_DIR=$(find openwrt/bin/targets -name "*-sysupgrade.bin" -exec dirname {} \; | head -n1)
+        if [ -z "$FIRMWARE_DIR" ]; then
+          echo "❌ 未找到 sysupgrade 固件，无法上传！"
+          exit 1
+        fi
+        cd "$FIRMWARE_DIR"
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
+        echo "📁 固件目录：$PWD"
+        ls -lh
 
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
@@ -126,13 +134,16 @@ jobs:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
+    # ========== 修复：安全的 release 标签生成 ==========
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        touch release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+        echo "# OpenWrt 固件发布" > release.txt
+        echo "**编译时间**: $(date)" >> release.txt
+        echo "**源码分支**: ${{ env.REPO_BRANCH }}" >> release.txt
+        echo "" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware to release
