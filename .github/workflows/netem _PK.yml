@@ -8,32 +8,28 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      # 1. 检出您的仓库（获取 AX1800.config 等配置）
       - name: Checkout user config
         uses: actions/checkout@v4
         with:
           path: user_repo
 
-      # 2. 克隆 OpenWrt 源码（与您固件一致）
       - name: Checkout OpenWrt
         run: |
           git clone --depth=1 https://github.com/immortalwrt/immortalwrt -b master openwrt
 
-      # 3. 从您的 netem 仓库获取源码（直接复制到 package/）
+      # 修正点：使用正确的仓库内部路径
       - name: Fetch netem source
         run: |
           git clone --depth=1 https://github.com/kinsum666/openwrt-netem netem
-          cp -r netem/netem-control openwrt/package/
-          cp -r netem/luci-app-netem openwrt/package/
+          cp -r netem/net/network/netem-control openwrt/package/
+          cp -r netem/luci/LuCI/luci-app-netem openwrt/package/
 
-      # 4. 安装编译依赖（精简但完整）
       - name: Install dependencies
         run: |
           sudo -E apt-get -qq update
           sudo -E apt-get -qq install build-essential ccache git file python3 python3-dev python3-pip python3-venv unzip wget
           sudo -E apt-get -qq install libncurses5-dev libssl-dev zlib1g-dev gawk flex gettext
 
-      # 5. 准备 .config（使用您的配置并强制启用 netem）
       - name: Prepare .config
         run: |
           cp user_repo/AX1800.config openwrt/.config
@@ -42,33 +38,27 @@ jobs:
           echo "CONFIG_PACKAGE_luci-app-netem=y" >> .config
           make defconfig
 
-      # 6. 下载工具链和依赖源码（首次运行较慢，可加缓存）
       - name: Download sources and toolchain
         run: |
           cd openwrt
           make download -j8
 
-      # 7. 编译 netem-control
       - name: Compile netem-control
         run: |
           cd openwrt
           make package/netem-control/compile -j$(nproc)
 
-      # 8. 编译 luci-app-netem
       - name: Compile luci-app-netem
         run: |
           cd openwrt
           make package/luci-app-netem/compile -j$(nproc)
 
-      # 9. 收集生成的 .ipk 文件
       - name: Collect IPKs
         run: |
           mkdir ipk_output
-          find openwrt/bin/packages -name "*.ipk" | grep -E "(netem-control|luci-app-netem)" | xargs -I {} cp {} ipk_output/
-          # 如果没找到，尝试搜索其他路径（如 bin/targets/ 下的 packages）
+          find openwrt/bin/packages -name "*.ipk" | grep -E "(netem-control|luci-app-netem)" | xargs -I {} cp {} ipk_output/ 2>/dev/null || true
           find openwrt/bin -name "*.ipk" | grep -E "(netem-control|luci-app-netem)" | xargs -I {} cp {} ipk_output/ 2>/dev/null || true
 
-      # 10. 上传至 Actions Artifacts（可直接下载）
       - name: Upload IPKs
         uses: actions/upload-artifact@v4
         with:
