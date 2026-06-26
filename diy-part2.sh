@@ -11,7 +11,7 @@
 #
 
 # Modify default IP
-sed -i 's/192.168.1.1/192.168.50.5/g' package/base-files/files/bin/config_generate
+sed -i 's/192.168.1.1/192.168.50.1/g' package/base-files/files/bin/config_generate
 
 # Modify default theme
 #sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile
@@ -27,3 +27,11 @@ sed -i 's/jdcloud_re-ss-01/jdcloud-re-ss-01/g' target/linux/qualcommax/image/ipq
 
 # 同时将可能存在的包名 ipq-wifi-jdcloud_re-ss-01 也改为 ipq-wifi-jdcloud-re-ss-01（如果有）
 sed -i 's/ipq-wifi-jdcloud_re-ss-01/ipq-wifi-jdcloud-re-ss-01/g' target/linux/qualcommax/image/ipq60xx.mk
+
+
+# 修复设备树文件名（下划线转连字符）
+if [ -f "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-jdcloud_re-ss-01.dts" ]; then
+    mv target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-jdcloud_re-ss-01.dts \
+       target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-jdcloud-re-ss-01.dts
+    echo "✅ DTS 文件名已修正"
+fi
