@@ -1,13 +1,8 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
 #
-# File: .github/workflows/openwrt-bulder.yml
-# Description: Build OpenWrt using GitHub Actions
-#
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
+# File: .github/workflows/openwrt-builder.yml
+# Description: Build OpenWrt (official) with caching and optimized environment
 #
 
 name: OpenWrt
@@ -30,13 +25,14 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
     - name: Checkout
-      uses: actions/checkout@main
+      uses: actions/checkout@v4
 
+    # ---------- 精简环境初始化（仅安装核心依赖） ----------
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -44,13 +40,17 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        # 仅安装 OpenWrt 编译必需的核心包（移除所有非必需包）
+        sudo -E apt-get -qq install build-essential clang flex g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils python3-pip python3-venv rsync unzip zlib1g-dev file wget
+        # device-tree-compiler 和 ccache 用于加速
+        sudo -E apt-get -qq install device-tree-compiler ccache
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
+    # ---------- 克隆源码 ----------
     - name: Clone source code
       working-directory: /workdir
       run: |
@@ -58,6 +58,7 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
+    # ---------- 自定义 feeds ----------
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
@@ -71,6 +72,7 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
+    # ---------- 自定义配置 ----------
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files
@@ -79,19 +81,43 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
+    # ---------- 缓存：ccache 和 staging_dir ----------
+    - name: Cache Dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          openwrt/.ccache
+          openwrt/staging_dir
+        # 缓存键基于 .config 哈希，配置变化时自动失效
+        key: ${{ runner.os }}-${{ hashFiles('openwrt/.config') }}-${{ env.TZ }}
+        restore-keys: |
+          ${{ runner.os }}-${{ hashFiles('openwrt/.config') }}-
+
+    # ---------- 刷新缓存时间戳（避免 make 误判过期） ----------
+    - name: Refresh cache stamps
+      run: |
+        if [ -d "openwrt/staging_dir" ]; then
+          find openwrt/staging_dir -type d -name "stamp" -not -path "*target*" | while read -r dir; do
+            find "$dir" -type f -exec touch {} +
+          done
+        fi
+
+    # ---------- 下载源码包 ----------
     - name: Download package
-      id: package
       run: |
         cd openwrt
         make defconfig
+        export PATH="/usr/lib/ccache:$PATH"
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
+    # ---------- 编译固件（保持原重试逻辑） ----------
     - name: Compile the firmware
       id: compile
       run: |
         cd openwrt
+        export PATH="/usr/lib/ccache:$PATH"
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
@@ -99,18 +125,27 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
+    # ---------- 准备 Release 内容 ----------
+    - name: Generate release tag and body
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        echo "# OpenWrt 固件发布" > release.txt
+        echo "**编译时间**: $(date)" >> release.txt
+        echo "**源码分支**: ${{ env.REPO_BRANCH }}" >> release.txt
+        echo "" >> release.txt
+        # 提取插件列表（如果存在 manifest）
+        MANIFEST=$(find openwrt/bin/targets -name "*.manifest" | head -n1)
+        if [ -n "$MANIFEST" ]; then
+          echo "## 📦 包含的插件" >> release.txt
+          echo '```' >> release.txt
+          grep -oP "luci-app(-[a-zA-Z0-9]{1,}){1,}" "$MANIFEST" | awk -F":" '{print $NF}' | sort -u >> release.txt
+          echo '```' >> release.txt
+        fi
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload bin directory
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
-    # ========== 修复：使用 find 精确定位固件目录 ==========
+    # ---------- 定位固件目录 ----------
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
@@ -127,35 +162,21 @@ jobs:
         echo "📁 固件目录：$PWD"
         ls -lh
 
-    - name: Upload firmware directory
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
-      with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
-
-    # ========== 修复：安全的 release 标签生成 ==========
-    - name: Generate release tag
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        echo "# OpenWrt 固件发布" > release.txt
-        echo "**编译时间**: $(date)" >> release.txt
-        echo "**源码分支**: ${{ env.REPO_BRANCH }}" >> release.txt
-        echo "" >> release.txt
-        echo "status=success" >> $GITHUB_OUTPUT
-
+    # ---------- 发布到 GitHub Release（只上传 sysupgrade 和 factory） ----------
     - name: Upload firmware to release
-      uses: softprops/action-gh-release@master
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+      uses: softprops/action-gh-release@v2
+      if: steps.tag.outputs.status == 'success' && steps.organize.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
+        name: "Firmware - ${{ steps.tag.outputs.release_tag }}"
         body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        files: |
+          ${{ env.FIRMWARE }}/*-sysupgrade.bin
+          ${{ env.FIRMWARE }}/*-factory.bin
 
+    # ---------- 清理旧工作流和 Release ----------
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
       with:
