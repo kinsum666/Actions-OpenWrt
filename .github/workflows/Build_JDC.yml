@@ -108,29 +108,26 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    # ========== 新增：验证实际编译成功的软件包 ==========
+    # ========== 验证实际编译成功的软件包（改进路径查找） ==========
     - name: Verify compiled packages
       id: verify
       if: steps.compile.outputs.status == 'success'
       run: |
-        cd openwrt/bin/targets/*/*
-        FIRMWARE_DIR=$(pwd)
-        echo "FIRMWARE_DIR=$FIRMWARE_DIR" >> $GITHUB_ENV
-
-        # 查找 sysupgrade 固件
-        SYSIMG=$(ls *-sysupgrade.bin 2>/dev/null | head -n1)
-        if [ -z "$SYSIMG" ]; then
+        # 查找 sysupgrade 固件所在目录
+        FIRMWARE_DIR=$(find openwrt/bin/targets -name "*.sysupgrade.bin" -exec dirname {} \; | head -n1)
+        if [ -z "$FIRMWARE_DIR" ]; then
           echo "⚠️ 未找到 sysupgrade 固件，跳过验证"
           echo "## ⚠️ 固件验证跳过（未找到 sysupgrade 文件）" >> $GITHUB_STEP_SUMMARY
           exit 0
         fi
+        echo "验证固件目录：$FIRMWARE_DIR"
 
         # 安装 unsquashfs（如果未安装）
         sudo apt-get install -y squashfs-tools
 
         # 解压固件到临时目录
         mkdir -p /tmp/rootfs
-        unsquashfs -d /tmp/rootfs "$SYSIMG"
+        unsquashfs -d /tmp/rootfs "$FIRMWARE_DIR"/*-sysupgrade.bin
 
         # 从 opkg status 文件中提取已安装的包
         if [ -f /tmp/rootfs/usr/lib/opkg/status ]; then
@@ -141,8 +138,8 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat /tmp/actual-packages.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          # 保存为文件供 Release 使用
-          cp /tmp/actual-packages.txt $FIRMWARE_DIR/actual-packages.txt
+          # 保存到固件目录，供后续 Release 使用
+          cp /tmp/actual-packages.txt "$FIRMWARE_DIR"/actual-packages.txt
         else
           echo "⚠️ 未找到 opkg status 文件，无法验证"
           echo "## ⚠️ 无法验证软件包列表（未找到 status 文件）" >> $GITHUB_STEP_SUMMARY
@@ -162,14 +159,23 @@ jobs:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
 
+    # ========== 改进：精确查找固件目录 ==========
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
+        # 使用 find 定位第一个包含 sysupgrade 的目录（即固件输出目录）
+        FIRMWARE_DIR=$(find openwrt/bin/targets -name "*.sysupgrade.bin" -exec dirname {} \; | head -n1)
+        if [ -z "$FIRMWARE_DIR" ]; then
+          echo "❌ 未找到 sysupgrade 固件，无法上传！"
+          exit 1
+        fi
+        cd "$FIRMWARE_DIR"
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
+        echo "📁 固件目录：$PWD"
+        ls -lh
 
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
@@ -178,7 +184,7 @@ jobs:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    # ========== 修改 Release 生成，包含实际软件包列表 ==========
+    # ========== 生成 Release 标签（修复语法） ==========
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
@@ -189,17 +195,18 @@ jobs:
         echo "**编译时间**: $(date)" >> release.txt
         echo "**设备**: 京东云亚瑟 (AX1800 Pro)" >> release.txt
         echo "" >> release.txt
-        # 如果有验证文件，则追加
-        if [ -f ${{ env.FIRMWARE }}/actual-packages.txt ]; then
+        # 如果存在软件包列表，追加
+        if [ -f "${{ env.FIRMWARE }}/actual-packages.txt" ]; then
           echo "## 📦 固件中包含的软件包（实际编译成功）" >> release.txt
           echo '```' >> release.txt
-          cat ${{ env.FIRMWARE }}/actual-packages.txt >> release.txt
+          cat "${{ env.FIRMWARE }}/actual-packages.txt" >> release.txt
           echo '```' >> release.txt
         else
           echo "⚠️ 未生成软件包列表，请检查编译日志" >> release.txt
         fi
         echo "" >> release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+        # 安全写法：如果启用了 GoFile 且 URL 存在，则追加（但本工作流未定义，故忽略）
+        # 如需使用，请确保 UPLOAD_GOFILE 和 steps.gofile 存在，否则不要写这行
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware to release
