@@ -18,3 +18,12 @@
 
 # Modify hostname
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
+
+# 备份原文件
+cp target/linux/qualcommax/image/ipq60xx.mk target/linux/qualcommax/image/ipq60xx.mk.bak
+
+# 将所有 jdcloud_re-ss-01 替换为 jdcloud-re-ss-01
+sed -i 's/jdcloud_re-ss-01/jdcloud-re-ss-01/g' target/linux/qualcommax/image/ipq60xx.mk
+
+# 同时将可能存在的包名 ipq-wifi-jdcloud_re-ss-01 也改为 ipq-wifi-jdcloud-re-ss-01（如果有）
+sed -i 's/ipq-wifi-jdcloud_re-ss-01/ipq-wifi-jdcloud-re-ss-01/g' target/linux/qualcommax/image/ipq60xx.mk
