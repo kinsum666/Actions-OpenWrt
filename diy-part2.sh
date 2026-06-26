@@ -62,3 +62,10 @@ echo "修正完成。"
 echo "建议执行以下命令清理并重新编译："
 echo "  make target/linux/clean"
 echo "  make target/linux/compile"
+
+
+# 在最后添加
+if [ ! -f "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-jdcloud-re-ss-01.dts" ]; then
+    echo "❌ 错误：未能成功创建 ipq6000-jdcloud-re-ss-01.dts，编译将失败！"
+    exit 1
+fi
