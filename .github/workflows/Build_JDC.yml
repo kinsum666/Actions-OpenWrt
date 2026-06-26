@@ -156,7 +156,7 @@ jobs:
         find openwrt/bin/targets -type f -name "*.bin" 2>/dev/null | head -20 || echo "未找到 .bin 文件"
         ls -laR openwrt/bin/targets/ 2>/dev/null || echo "目录不存在"
 
-    # ========== 改进：精确查找固件目录并安全处理 ==========
+    # ========== 改进：精确查找固件目录，失败则终止 ==========
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
@@ -164,11 +164,7 @@ jobs:
         FIRMWARE_DIR=$(find openwrt/bin/targets -name "*-sysupgrade.bin" -exec dirname {} \; | head -n1)
         if [ -z "$FIRMWARE_DIR" ]; then
           echo "❌ 未找到 sysupgrade 固件，无法上传！"
-          echo "status=failure" >> $GITHUB_OUTPUT
-          # 设置一个安全的空目录，避免误操作
-          mkdir -p /tmp/empty
-          echo "FIRMWARE=/tmp/empty" >> $GITHUB_ENV
-          exit 0   # 不中断工作流，让后续步骤根据状态跳过
+          exit 1
         fi
         cd "$FIRMWARE_DIR"
         rm -rf packages
@@ -184,7 +180,7 @@ jobs:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    # ========== 生成 Release 标签（修复语法） ==========
+    # ========== 生成 Release 标签 ==========
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
@@ -205,6 +201,7 @@ jobs:
         echo "" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
+    # ========== 修复：只上传 sysupgrade 和 factory 固件，避免权限错误 ==========
     - name: Upload firmware to release
       uses: softprops/action-gh-release@master
       if: steps.organize.outputs.status == 'success' && steps.tag.outputs.status == 'success' && !cancelled()
@@ -213,7 +210,9 @@ jobs:
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        files: |
+          ${{ env.FIRMWARE }}/*-sysupgrade.bin
+          ${{ env.FIRMWARE }}/*-factory.bin
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
