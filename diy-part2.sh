@@ -33,15 +33,21 @@ else
     echo "⚠️ 未找到 ipq60xx.mk，跳过"
 fi
 
-# 2. 查找 DTS 源文件（优先连字符版本，其次下划线版本）
+# 2. 查找 DTS 源文件（优先从 patch/ 目录获取，其次在 target/linux/qualcommax 下搜索）
 DTS_SRC=""
-DTS_CANDIDATE=$(find target/linux/qualcommax -name "ipq6000-jdcloud-re-ss-01.dts" 2>/dev/null | head -n1)
-if [ -n "$DTS_CANDIDATE" ]; then
-    DTS_SRC="$DTS_CANDIDATE"
+if [ -f "patch/ipq6000-jdcloud-re-ss-01.dts" ]; then
+    DTS_SRC="patch/ipq6000-jdcloud-re-ss-01.dts"
+    echo "✅ 在 patch/ 目录找到 DTS 源文件"
 else
-    DTS_CANDIDATE=$(find target/linux/qualcommax -name "ipq6000-jdcloud_re-ss-01.dts" 2>/dev/null | head -n1)
+    echo "⚠️ patch/ 目录下未找到，尝试在 target/linux/qualcommax 中搜索..."
+    DTS_CANDIDATE=$(find target/linux/qualcommax -name "ipq6000-jdcloud-re-ss-01.dts" 2>/dev/null | head -n1)
     if [ -n "$DTS_CANDIDATE" ]; then
         DTS_SRC="$DTS_CANDIDATE"
+    else
+        DTS_CANDIDATE=$(find target/linux/qualcommax -name "ipq6000-jdcloud_re-ss-01.dts" 2>/dev/null | head -n1)
+        if [ -n "$DTS_CANDIDATE" ]; then
+            DTS_SRC="$DTS_CANDIDATE"
+        fi
     fi
 fi
 
@@ -54,18 +60,20 @@ if [ -n "$DTS_SRC" ]; then
     echo "✅ DTS 文件已复制到 $DTS_DEST"
 else
     echo "❌ 错误：未找到任何 jdcloud 的 DTS 源文件！"
-    echo "   请手动将 ipq6000-jdcloud-re-ss-01.dts 放入 target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/"
+    echo "   请手动将 ipq6000-jdcloud-re-ss-01.dts 放入 patch/ 目录"
+    echo "   或放入 target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/"
     echo "   或检查补丁是否正确应用。"
+fi
+
+# 4. 最终校验：目标文件是否存在
+if [ -f "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-jdcloud-re-ss-01.dts" ]; then
+    echo "✅ 最终校验通过：DTS 文件已就位"
+else
+    echo "❌ 错误：未能成功创建 ipq6000-jdcloud-re-ss-01.dts，编译将失败！"
+    exit 1
 fi
 
 echo "修正完成。"
 echo "建议执行以下命令清理并重新编译："
 echo "  make target/linux/clean"
 echo "  make target/linux/compile"
-
-
-# 在最后添加
-if [ ! -f "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-jdcloud-re-ss-01.dts" ]; then
-    echo "❌ 错误：未能成功创建 ipq6000-jdcloud-re-ss-01.dts，编译将失败！"
-    exit 1
-fi
