@@ -1,5 +1,5 @@
 
-name: Build_JDC.yml
+name: Openwrt.yml
 
 on:
   repository_dispatch:
