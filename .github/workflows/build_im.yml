@@ -72,6 +72,7 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P2_SH
         
         echo "CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y" >> openwrt/.config
+
     # ---------- 缓存（包含 dl 目录） ----------
     - name: Cache Dependencies
       uses: actions/cache@v4
@@ -127,6 +128,13 @@ jobs:
         # 打包整个 bin 目录（以便包含所有编译输出）
         tar -czf bin.tar.gz -C openwrt bin
         echo "✅ Packed bin directory into bin.tar.gz"
+
+    # ⭐ 新增：上传 IPK 作为 Artifact（可在 Actions 页面直接下载）
+    - name: Upload IPK as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ipk-files
+        path: ipk_output/
 
     # ---------- 清理旧缓存 ----------
     - name: Delete Old Cache
