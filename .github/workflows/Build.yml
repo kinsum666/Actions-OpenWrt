@@ -79,6 +79,12 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
+        # 确保设备被启用（使用连字符版本）
+        echo "CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud-re-ss-01=y" >> .config
+        # 立即重新生成配置，使设备生效
+        
+        make defconfig
+        
     - name: Download package
       id: package
       run: |
