@@ -17,7 +17,7 @@ env:
   CONFIG_FILE: AX1800.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-2.sh
-  UPLOAD_BIN_DIR: false
+  UPLOAD_BIN_DIR: true
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
@@ -31,6 +31,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
+    # ---------- 环境初始化 ----------
     - name: Build System Setup
       run: |
         sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
@@ -41,11 +42,13 @@ jobs:
         sudo -E systemctl daemon-reload
         sudo timedatectl set-timezone "$TZ"
 
+    # ---------- 克隆源码 ----------
     - name: Clone source code
       run: |
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf $PWD/openwrt $GITHUB_WORKSPACE/openwrt
 
+    # ---------- 自定义 feeds ----------
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
@@ -59,6 +62,7 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
+    # ---------- 自定义配置 ----------
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files
@@ -67,7 +71,7 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    # ---------- 缓存（增加 dl 目录） ----------
+    # ---------- 缓存（包含 dl 目录） ----------
     - name: Cache Dependencies
       uses: actions/cache@v4
       with:
@@ -79,6 +83,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-${{ hashFiles('openwrt/.config') }}-
 
+    # ---------- 刷新缓存时间戳 ----------
     - name: Refresh cache stamps
       run: |
         if [ -d "openwrt/staging_dir" ]; then
@@ -87,6 +92,7 @@ jobs:
           done
         fi
 
+    # ---------- 下载源码包 ----------
     - name: Download package
       run: |
         cd openwrt
@@ -96,6 +102,7 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
+    # ---------- 编译固件 ----------
     - name: Compile the firmware
       id: compile
       run: |
@@ -108,15 +115,19 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    # ---------- 收集所有 .ipk 文件 ----------
-    - name: Collect IPK files
+    # ---------- 收集所有 IPK 并打包整个 bin 目录 ----------
+    - name: Collect artifacts
       run: |
         mkdir -p ipk_output
-        find openwrt/bin/packages -name "*.ipk" -exec cp {} ipk_output/ \; 2>/dev/null || true
-        find openwrt/bin -name "*.ipk" -exec cp {} ipk_output/ \; 2>/dev/null || true
-        echo "✅ Collected IPK files:"
-        ls -lh ipk_output/ | head -20 || echo "No IPK files found"
+        # 复制所有 .ipk 文件到 ipk_output
+        find openwrt/bin -type f -name "*.ipk" -exec cp -v {} ipk_output/ \; 2>/dev/null || true
+        echo "✅ Copied IPK files:"
+        ls -lh ipk_output/ || echo "No IPK found"
+        # 打包整个 bin 目录（以便包含所有编译输出）
+        tar -czf bin.tar.gz -C openwrt bin
+        echo "✅ Packed bin directory into bin.tar.gz"
 
+    # ---------- 清理旧缓存 ----------
     - name: Delete Old Cache
       run: |
         gh cache list --key ${{ runner.os }}-${{ hashFiles('openwrt/.config') }}- --json key --jq '.[] | .key' | while read -r key; do
@@ -127,7 +138,7 @@ jobs:
         echo "ccache: $(du -sh openwrt/.ccache 2>/dev/null | cut -f1)"
         echo "staging: $(du -sh openwrt/staging_dir 2>/dev/null | cut -f1)"
 
-    # ---------- 生成 Release 标签 ----------
+    # ---------- 生成 Release 标签和内容 ----------
     - name: Generate release tag and body
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
@@ -147,27 +158,25 @@ jobs:
         fi
         echo "status=success" >> $GITHUB_OUTPUT
 
-    # ---------- 定位固件目录（不退出，仅设置状态） ----------
-    - name: Locate firmware directory
+    # ---------- 定位并复制固件（不中断） ----------
+    - name: Locate and copy firmware
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
+        mkdir -p firmware_output
         FIRMWARE_DIR=$(find openwrt/bin/targets -name "*-sysupgrade.bin" -exec dirname {} \; | head -n1)
-        if [ -z "$FIRMWARE_DIR" ]; then
+        if [ -n "$FIRMWARE_DIR" ]; then
+          cd "$FIRMWARE_DIR"
+          cp -v *-sysupgrade.bin *-factory.bin $GITHUB_WORKSPACE/firmware_output/ 2>/dev/null || true
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "📁 固件目录：$FIRMWARE_DIR"
+        else
           echo "⚠️ 未找到 sysupgrade 固件，跳过固件上传"
           echo "status=skipped" >> $GITHUB_OUTPUT
-          # 不退出，继续执行
-        else
-          cd "$FIRMWARE_DIR"
-          rm -rf packages
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
-          echo "📁 固件目录：$PWD"
-          ls -lh
         fi
 
-    # ---------- 发布到 GitHub Release（包含固件和 IPK） ----------
-    - name: Upload firmware and IPKs to release
+    # ---------- 发布到 GitHub Release（包含所有产物） ----------
+    - name: Upload artifacts to release
       uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
@@ -177,16 +186,18 @@ jobs:
         name: "Firmware - ${{ steps.tag.outputs.release_tag }}"
         body_path: release.txt
         files: |
-          ${{ env.FIRMWARE }}/*-sysupgrade.bin
-          ${{ env.FIRMWARE }}/*-factory.bin
+          firmware_output/*
           ipk_output/*.ipk
+          bin.tar.gz
 
+    # ---------- 清理旧工作流运行 ----------
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
       with:
         retain_days: 0
         keep_minimum_runs: 2
 
+    # ---------- 清理旧 Releases ----------
     - name: Remove old Releases
       uses: dev-drprasad/delete-older-releases@master
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
