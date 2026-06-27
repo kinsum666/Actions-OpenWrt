@@ -70,7 +70,8 @@ jobs:
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
-
+        
+        echo "CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y" >> openwrt/.config
     # ---------- 缓存（包含 dl 目录） ----------
     - name: Cache Dependencies
       uses: actions/cache@v4
