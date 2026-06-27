@@ -5,7 +5,7 @@
 # Description: Build ImmortalWrt with caching and optimized environment
 #
 
-name: Build_immortal
+name: Build_netem
 
 on:
   repository_dispatch:
